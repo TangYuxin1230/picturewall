@@ -29,6 +29,10 @@
 
 生成的模组位于 `build/libs`。
 
+## 开源协议
+
+本项目采用 MIT 协议，详见 [LICENSE](./LICENSE)。
+
 ---
 
 # Picture Wall
@@ -60,3 +64,7 @@ gradlew.bat build
 ```
 
 The remapped mod jar is created under `build/libs`.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](./LICENSE).
