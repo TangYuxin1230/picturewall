@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "picturewall",
+  "version": "${version}",
+  "name": "Picture Wall",
+  "description": "Place custom images on walls in your Minecraft world.",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.rong.picturewall.PictureWallMod"
+    ],
+    "client": [
+      "com.rong.picturewall.PictureWallClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.10",
+    "minecraft": "~1.21.1",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

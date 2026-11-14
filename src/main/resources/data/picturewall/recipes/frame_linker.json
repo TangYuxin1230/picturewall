@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    " IR",
+    " SI",
+    " S "
+  ],
+  "key": {
+    "I": "minecraft:iron_ingot",
+    "R": "minecraft:redstone",
+    "S": "minecraft:stick"
+  },
+  "result": {
+    "id": "picturewall:frame_linker",
+    "count": 1
+  }
+}
