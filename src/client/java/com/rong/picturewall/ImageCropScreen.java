@@ -175,7 +175,7 @@ public class ImageCropScreen extends Screen {
 
 	@Override
 	public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-		renderBackground(context, mouseX, mouseY, delta);
+		renderBackground(context);
 		context.drawCenteredTextWithShadow(textRenderer, title, width / 2, 12, 0xFFFFFF);
 		context.drawCenteredTextWithShadow(textRenderer,
 				Text.translatable("picturewall.crop.hint"), width / 2, 27, 0xBBBBBB);

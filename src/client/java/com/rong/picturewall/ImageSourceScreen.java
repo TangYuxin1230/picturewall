@@ -1,12 +1,14 @@
 package com.rong.picturewall;
 
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
+import net.minecraft.network.PacketByteBuf;
 import net.minecraft.util.math.BlockPos;
 
 import java.io.IOException;
@@ -162,13 +164,15 @@ public class ImageSourceScreen extends Screen {
 		if (source.isEmpty()) {
 			crop = ImageCrop.NONE;
 		}
-		ClientPlayNetworking.send(new SetImagePayload(pos, source, crop));
+		PacketByteBuf buf = PacketByteBufs.create();
+		new SetImagePayload(pos, source, crop).write(buf);
+		ClientPlayNetworking.send(SetImagePayload.ID, buf);
 		close();
 	}
 
 	@Override
 	public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-		renderBackground(context, mouseX, mouseY, delta);
+		renderBackground(context);
 		context.drawCenteredTextWithShadow(textRenderer, title, width / 2, height / 2 - 78, 0xFFFFFF);
 		super.render(context, mouseX, mouseY, delta);
 		if (!status.isEmpty()) {

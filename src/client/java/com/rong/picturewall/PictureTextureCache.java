@@ -102,7 +102,7 @@ public final class PictureTextureCache {
 				return null;
 			}
 			try {
-				Thread.startVirtualThread(() -> load(source));
+				PictureWallThreads.execute(() -> load(source));
 			} catch (RuntimeException exception) {
 				LOADING.remove(source);
 				TEXTURE_COUNT.decrementAndGet();

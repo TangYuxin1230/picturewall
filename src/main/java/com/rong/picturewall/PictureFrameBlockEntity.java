@@ -4,7 +4,6 @@ import net.minecraft.block.BlockState;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.network.packet.s2c.play.BlockEntityUpdateS2CPacket;
-import net.minecraft.registry.RegistryWrapper;
 import net.minecraft.util.math.BlockPos;
 import org.jetbrains.annotations.Nullable;
 
@@ -82,8 +81,8 @@ public class PictureFrameBlockEntity extends BlockEntity {
 	}
 
 	@Override
-	protected void writeNbt(NbtCompound nbt, RegistryWrapper.WrapperLookup registries) {
-		super.writeNbt(nbt, registries);
+	public void writeNbt(NbtCompound nbt) {
+		super.writeNbt(nbt);
 		nbt.putString("ImageSource", source);
 		nbt.putInt("ImageCropLeft", crop.left());
 		nbt.putInt("ImageCropTop", crop.top());
@@ -93,8 +92,8 @@ public class PictureFrameBlockEntity extends BlockEntity {
 	}
 
 	@Override
-	protected void readNbt(NbtCompound nbt, RegistryWrapper.WrapperLookup registries) {
-		super.readNbt(nbt, registries);
+	public void readNbt(NbtCompound nbt) {
+		super.readNbt(nbt);
 		String saved = nbt.getString("ImageSource");
 		source = isValidSource(saved) ? saved : "";
 		ImageCrop savedCrop = new ImageCrop(
@@ -109,8 +108,8 @@ public class PictureFrameBlockEntity extends BlockEntity {
 	}
 
 	@Override
-	public NbtCompound toInitialChunkDataNbt(RegistryWrapper.WrapperLookup registries) {
-		return createNbt(registries);
+	public NbtCompound toInitialChunkDataNbt() {
+		return createNbt();
 	}
 
 	@Nullable

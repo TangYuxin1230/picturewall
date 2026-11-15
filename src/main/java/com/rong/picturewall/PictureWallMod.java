@@ -2,7 +2,6 @@ package com.rong.picturewall;
 
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
-import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.block.AbstractBlock;
 import net.minecraft.block.Blocks;
@@ -41,7 +40,7 @@ public class PictureWallMod implements ModInitializer {
 			Registry.register(
 					Registries.BLOCK_ENTITY_TYPE,
 					Identifier.of(MOD_ID, "picture_frame"),
-					BlockEntityType.Builder.create(PictureFrameBlockEntity::new, PICTURE_FRAME).build()
+					BlockEntityType.Builder.create(PictureFrameBlockEntity::new, PICTURE_FRAME).build(null)
 			);
 
 	@Override
@@ -50,10 +49,10 @@ public class PictureWallMod implements ModInitializer {
 			entries.add(PICTURE_FRAME_ITEM);
 			entries.add(FRAME_LINKER);
 		});
-		PayloadTypeRegistry.playC2S().register(SetImagePayload.ID, SetImagePayload.CODEC);
-		ServerPlayNetworking.registerGlobalReceiver(SetImagePayload.ID, (payload, context) -> {
-			context.server().execute(() -> updateFrame(
-					context.player(), payload.pos(), payload.source(), payload.crop()));
+		ServerPlayNetworking.registerGlobalReceiver(SetImagePayload.ID, (server, player, handler, buf, responseSender) -> {
+			SetImagePayload payload = SetImagePayload.read(buf);
+			server.execute(() -> updateFrame(
+					player, payload.pos(), payload.source(), payload.crop()));
 		});
 	}
 

@@ -1,6 +1,5 @@
 package com.rong.picturewall;
 
-import com.mojang.serialization.MapCodec;
 import net.minecraft.block.AbstractBlock;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockRenderType;
@@ -21,7 +20,6 @@ import net.minecraft.world.WorldAccess;
 import net.minecraft.world.WorldView;
 
 public class PictureFrameBlock extends BlockWithEntity {
-	private static final MapCodec<PictureFrameBlock> CODEC = createCodec(PictureFrameBlock::new);
 	private static final VoxelShape NORTH_SHAPE = Block.createCuboidShape(0, 0, 0, 16, 16, 2);
 	private static final VoxelShape SOUTH_SHAPE = Block.createCuboidShape(0, 0, 14, 16, 16, 16);
 	private static final VoxelShape EAST_SHAPE = Block.createCuboidShape(14, 0, 0, 16, 16, 16);
@@ -31,11 +29,6 @@ public class PictureFrameBlock extends BlockWithEntity {
 	public PictureFrameBlock(AbstractBlock.Settings settings) {
 		super(settings);
 		setDefaultState(getDefaultState().with(FACING, Direction.NORTH));
-	}
-
-	@Override
-	protected MapCodec<? extends BlockWithEntity> getCodec() {
-		return CODEC;
 	}
 
 	@Override
@@ -64,24 +57,24 @@ public class PictureFrameBlock extends BlockWithEntity {
 	}
 
 	@Override
-	protected VoxelShape getOutlineShape(BlockState state, BlockView world, BlockPos pos, ShapeContext context) {
+	public VoxelShape getOutlineShape(BlockState state, BlockView world, BlockPos pos, ShapeContext context) {
 		return shapeFor(state);
 	}
 
 	@Override
-	protected VoxelShape getCollisionShape(BlockState state, BlockView world, BlockPos pos, ShapeContext context) {
+	public VoxelShape getCollisionShape(BlockState state, BlockView world, BlockPos pos, ShapeContext context) {
 		return shapeFor(state);
 	}
 
 	@Override
-	protected boolean canPlaceAt(BlockState state, WorldView world, BlockPos pos) {
+	public boolean canPlaceAt(BlockState state, WorldView world, BlockPos pos) {
 		Direction facing = state.get(FACING);
 		BlockPos supportPos = pos.offset(facing.getOpposite());
 		return world.getBlockState(supportPos).isSideSolidFullSquare(world, supportPos, facing);
 	}
 
 	@Override
-	protected BlockState getStateForNeighborUpdate(BlockState state, Direction direction, BlockState neighborState,
+	public BlockState getStateForNeighborUpdate(BlockState state, Direction direction, BlockState neighborState,
 			WorldAccess world, BlockPos pos, BlockPos neighborPos) {
 		if (direction == state.get(FACING).getOpposite() && !canPlaceAt(state, world, pos)) {
 			return Blocks.AIR.getDefaultState();

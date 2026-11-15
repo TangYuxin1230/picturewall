@@ -135,7 +135,8 @@ public class PictureFrameBlockEntityRenderer implements BlockEntityRenderer<Pict
 				.texture(u, v)
 				.overlay(overlay)
 				.light(light)
-				.normal(matrices.peek(), facing.getOffsetX(), facing.getOffsetY(), facing.getOffsetZ());
+				.normal(matrices.peek().getNormalMatrix(),
+						facing.getOffsetX(), facing.getOffsetY(), facing.getOffsetZ());
 	}
 
 	private record Crop(float minU, float minV, float maxU, float maxV) {

@@ -127,7 +127,7 @@ final class PictureGifPlayer {
 		running = true;
 		started = true;
 		try {
-			Thread.startVirtualThread(() -> {
+			PictureWallThreads.execute(() -> {
 				try {
 					play();
 				} catch (IOException | RuntimeException exception) {
