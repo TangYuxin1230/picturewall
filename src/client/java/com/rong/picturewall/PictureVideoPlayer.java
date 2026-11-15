@@ -3,16 +3,33 @@ package com.rong.picturewall;
 import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.texture.NativeImageBackedTexture;
 import org.jcodec.api.FrameGrab;
-import org.jcodec.api.JCodecException;
 import org.jcodec.api.PictureWithMetadata;
+import org.jcodec.api.specific.AVCMP4Adaptor;
+import org.jcodec.api.specific.ContainerAdaptor;
+import org.jcodec.api.specific.GenericAdaptor;
+import org.jcodec.codecs.mpeg4.mp4.EsdsBox;
+import org.jcodec.codecs.mpeg12.MPEGDecoder;
+import org.jcodec.codecs.mpeg4.MPEG4Decoder;
+import org.jcodec.codecs.prores.ProresDecoder;
 import org.jcodec.common.Codec;
+import org.jcodec.common.DemuxerTrack;
 import org.jcodec.common.DemuxerTrackMeta;
+import org.jcodec.common.SeekableDemuxerTrack;
 import org.jcodec.common.VideoCodecMeta;
+import org.jcodec.common.VideoDecoder;
 import org.jcodec.common.io.ByteBufferSeekableByteChannel;
+import org.jcodec.common.io.NIOUtils;
 import org.jcodec.common.io.SeekableByteChannel;
+import org.jcodec.common.model.Packet;
 import org.jcodec.common.model.Picture;
 import org.jcodec.common.model.Size;
 import org.jcodec.scale.AWTUtil;
+import org.jcodec.containers.mp4.BoxUtil;
+import org.jcodec.containers.mp4.boxes.Box.LeafBox;
+import org.jcodec.containers.mp4.boxes.NodeBox;
+import org.jcodec.containers.mp4.boxes.SampleEntry;
+import org.jcodec.containers.mp4.demuxer.AbstractMP4DemuxerTrack;
+import org.jcodec.containers.mp4.demuxer.MP4Demuxer;
 
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferByte;
@@ -104,9 +121,10 @@ final class PictureVideoPlayer {
 	}
 
 	private static Metadata readMetadata(FrameGrab grab) throws IOException {
-		DemuxerTrackMeta track = grab.getVideoTrack().getMeta();
-		if (track.getCodec() != Codec.H264) {
-			throw new IOException("MP4 video must use the H.264 codec");
+		DemuxerTrack videoTrack = grab.getVideoTrack();
+		DemuxerTrackMeta track = videoTrack.getMeta();
+		if (!isSupportedCodec(videoTrack)) {
+			throw new IOException("MP4 video uses an unsupported codec");
 		}
 		double duration = track.getTotalDuration();
 		VideoCodecMeta codec = track.getVideoCodecMeta();
@@ -129,11 +147,89 @@ final class PictureVideoPlayer {
 	private static Decoder openDecoder(byte[] data) throws IOException {
 		SeekableByteChannel channel = ByteBufferSeekableByteChannel.readFromByteBuffer(ByteBuffer.wrap(data));
 		try {
-			return new Decoder(channel, FrameGrab.createFrameGrab(channel));
-		} catch (IOException | JCodecException | RuntimeException exception) {
+			MP4Demuxer demuxer = MP4Demuxer.createMP4Demuxer(channel);
+			DemuxerTrack videoTrack = demuxer.getVideoTrack();
+			if (!(videoTrack instanceof SeekableDemuxerTrack seekableTrack)) {
+				throw new IOException("MP4 video track is missing or cannot be read");
+			}
+			ContainerAdaptor codecAdaptor = createCodecAdaptor(seekableTrack);
+			return new Decoder(channel, new FrameGrab(seekableTrack, codecAdaptor));
+		} catch (IOException | RuntimeException exception) {
 			closeChannel(channel);
 			throw new IOException("Could not read the MP4 video stream", exception);
 		}
+	}
+
+	private static ContainerAdaptor createCodecAdaptor(SeekableDemuxerTrack videoTrack) throws IOException {
+		Codec codec = getCodec(videoTrack);
+		if (codec == Codec.H264) {
+			return new AVCMP4Adaptor(videoTrack.getMeta());
+		}
+		if (codec == Codec.MPEG4) {
+			VideoDecoder decoder = new MPEG4Decoder();
+			ByteBuffer codecPrivate = getMpeg4CodecPrivate(videoTrack);
+			return new GenericAdaptor(decoder) {
+				private boolean firstFrame = true;
+
+				@Override
+				public Picture decodeFrame(Packet packet, byte[][] buffer) {
+					ByteBuffer frameData = packet.getData();
+					if (firstFrame) {
+						firstFrame = false;
+						if (codecPrivate != null && codecPrivate.hasRemaining()) {
+							frameData = NIOUtils.combineBuffers(
+									java.util.List.of(codecPrivate.duplicate(), frameData));
+						}
+					}
+					return decoder.decodeFrame(frameData, buffer);
+				}
+			};
+		}
+		if (codec == Codec.MPEG2) {
+			return new GenericAdaptor(new MPEGDecoder());
+		}
+		if (codec == Codec.PRORES) {
+			return new GenericAdaptor(new ProresDecoder());
+		}
+		throw new IOException("Unsupported MP4 video codec: " + codec);
+	}
+
+	private static ByteBuffer getMpeg4CodecPrivate(SeekableDemuxerTrack videoTrack) {
+		if (!(videoTrack instanceof AbstractMP4DemuxerTrack mp4Track)
+				|| mp4Track.getSampleEntries().length == 0) {
+			return null;
+		}
+		SampleEntry sampleEntry = mp4Track.getSampleEntries()[0];
+		LeafBox esds = NodeBox.findFirst(sampleEntry, LeafBox.class, "esds");
+		if (esds == null) {
+			esds = NodeBox.findFirstPath(sampleEntry, LeafBox.class, new String[] { null, "esds" });
+		}
+		return esds == null ? null : BoxUtil.as(EsdsBox.class, esds).getStreamInfo();
+	}
+
+	private static Codec getCodec(DemuxerTrack videoTrack) {
+		Codec codec = videoTrack.getMeta().getCodec();
+		if (codec != null || !(videoTrack instanceof AbstractMP4DemuxerTrack mp4Track)
+				|| mp4Track.getSampleEntries().length == 0) {
+			return codec;
+		}
+		String fourcc = mp4Track.getSampleEntries()[0].getFourcc();
+		codec = Codec.codecByFourcc(fourcc);
+		if (codec != null) {
+			return codec;
+		}
+		if ("mp4v".equals(fourcc)) {
+			return Codec.MPEG4;
+		}
+		if ("mp2v".equals(fourcc)) {
+			return Codec.MPEG2;
+		}
+		return null;
+	}
+
+	private static boolean isSupportedCodec(DemuxerTrack videoTrack) {
+		Codec codec = getCodec(videoTrack);
+		return codec == Codec.H264 || codec == Codec.MPEG4 || codec == Codec.MPEG2 || codec == Codec.PRORES;
 	}
 
 	private static NativeImage toNativeImage(Picture picture) throws IOException {
