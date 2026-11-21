@@ -1,9 +1,14 @@
 package com.rong.picturewall;
 
+import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.texture.NativeImageBackedTexture;
 import net.minecraft.util.Identifier;
+import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL12;
+import org.lwjgl.opengl.GL15;
+import org.lwjgl.opengl.GL21;
 
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
@@ -15,6 +20,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Iterator;
@@ -325,15 +331,36 @@ public final class PictureTextureCache {
 		if (player == null) {
 			return;
 		}
-		NativeImage frame = player.pollLatestFrame();
+		ByteBuffer frame = player.pollLatestFrame();
 		if (frame == null) {
 			return;
 		}
 		try {
 			NativeImageBackedTexture texture = player.texture();
 			if (texture != null) {
-				texture.getImage().copyFrom(frame);
-				texture.upload();
+				RenderSystem.assertOnRenderThread();
+				int unpackAlignment = GL11.glGetInteger(GL11.GL_UNPACK_ALIGNMENT);
+				int unpackRowLength = GL11.glGetInteger(GL11.GL_UNPACK_ROW_LENGTH);
+				int unpackSkipPixels = GL11.glGetInteger(GL11.GL_UNPACK_SKIP_PIXELS);
+				int unpackSkipRows = GL11.glGetInteger(GL11.GL_UNPACK_SKIP_ROWS);
+				int unpackBuffer = GL11.glGetInteger(GL21.GL_PIXEL_UNPACK_BUFFER_BINDING);
+				texture.bindTexture();
+				try {
+					GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, 0);
+					GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 1);
+					GL11.glPixelStorei(GL11.GL_UNPACK_ROW_LENGTH, 0);
+					GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_PIXELS, 0);
+					GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_ROWS, 0);
+					GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0,
+							player.metadata().width(), player.metadata().height(),
+							GL12.GL_BGR, GL11.GL_UNSIGNED_BYTE, frame);
+				} finally {
+					GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, unpackAlignment);
+					GL11.glPixelStorei(GL11.GL_UNPACK_ROW_LENGTH, unpackRowLength);
+					GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_PIXELS, unpackSkipPixels);
+					GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_ROWS, unpackSkipRows);
+					GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, unpackBuffer);
+				}
 			}
 		} catch (RuntimeException exception) {
 			PictureWallMod.LOGGER.warn("Could not update an MP4 video texture", exception);

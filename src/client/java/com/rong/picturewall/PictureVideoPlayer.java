@@ -48,10 +48,11 @@ final class PictureVideoPlayer {
 
 	private final byte[] data;
 	private final Metadata metadata;
-	private final ArrayBlockingQueue<NativeImage> frames = new ArrayBlockingQueue<>(2);
-	private final ArrayBlockingQueue<NativeImage> reusableFrames = new ArrayBlockingQueue<>(FRAME_BUFFER_COUNT);
+	private final ArrayBlockingQueue<ByteBuffer> frames = new ArrayBlockingQueue<>(2);
+	private final ArrayBlockingQueue<ByteBuffer> reusableFrames = new ArrayBlockingQueue<>(FRAME_BUFFER_COUNT);
 	private volatile boolean running;
 	private volatile NativeImageBackedTexture texture;
+	private volatile FfmpegHardwareDecoder hardwareDecoder;
 	private NativeImage initialFrame;
 	private Decoder decoder;
 	private double initialTimestamp;
@@ -272,6 +273,23 @@ final class PictureVideoPlayer {
 		}
 	}
 
+	private void copyPixels(BufferedImage buffered, ByteBuffer frame) throws IOException {
+		if (buffered.getWidth() != metadata.width || buffered.getHeight() != metadata.height) {
+			throw new IOException("Video frame dimensions changed during playback");
+		}
+		if (!(buffered.getRaster().getDataBuffer() instanceof DataBufferByte dataBuffer)) {
+			throw new IOException("Unsupported decoded video frame format");
+		}
+		int byteCount = Math.multiplyExact(Math.multiplyExact(buffered.getWidth(), buffered.getHeight()), 3);
+		byte[] pixels = dataBuffer.getData();
+		if (pixels.length < byteCount || frame.capacity() < byteCount) {
+			throw new IOException("Decoded video frame is incomplete");
+		}
+		frame.clear();
+		frame.put(pixels, 0, byteCount);
+		frame.flip();
+	}
+
 	private static void closeDecoder(Decoder decoder) {
 		closeChannel(decoder.channel);
 	}
@@ -303,14 +321,15 @@ final class PictureVideoPlayer {
 	}
 
 	long reservedMemoryBytes() {
-		return (long) metadata.width * metadata.height * 4 * (FRAME_BUFFER_COUNT + 1L);
+		return (long) metadata.width * metadata.height * (FRAME_BUFFER_COUNT * 3L + 8L);
 	}
 
 	void prepareFrameBuffers() {
 		int allocated = 0;
 		try {
+			int frameBytes = Math.multiplyExact(Math.multiplyExact(metadata.width, metadata.height), 3);
 			while (allocated < FRAME_BUFFER_COUNT) {
-				reusableFrames.add(new NativeImage(metadata.width, metadata.height, false));
+				reusableFrames.add(ByteBuffer.allocateDirect(frameBytes));
 				allocated++;
 			}
 		} catch (RuntimeException exception) {
@@ -338,6 +357,60 @@ final class PictureVideoPlayer {
 	}
 
 	private void play() throws IOException {
+		try {
+			playWithHardwareDecoder();
+		} catch (IOException exception) {
+			if (!running) {
+				return;
+			}
+			PictureWallMod.LOGGER.warn("GPU video decoding is unavailable; falling back to JCodec", exception);
+			playWithSoftwareDecoder();
+		}
+	}
+
+	private void playWithHardwareDecoder() throws IOException {
+		long playbackStartNanos = System.nanoTime();
+		int decodedFrames = 0;
+		FfmpegHardwareDecoder currentDecoder = FfmpegHardwareDecoder.open(data, metadata);
+		hardwareDecoder = currentDecoder;
+		try {
+			while (running) {
+				ByteBuffer frame = takeReusableFrame();
+				if (frame == null) {
+					return;
+				}
+				boolean decoded;
+				try {
+					decoded = currentDecoder.readFrame(frame);
+				} catch (IOException exception) {
+					releaseFrame(frame);
+					throw exception;
+				}
+				if (!decoded) {
+					releaseFrame(frame);
+					if (!running) {
+						return;
+					}
+					currentDecoder.verifyExit();
+					throw new IOException("FFmpeg hardware decoder stopped unexpectedly");
+				}
+				waitUntil(playbackStartNanos + decodedFrames * MIN_FRAME_INTERVAL_NANOS);
+				if (!running) {
+					releaseFrame(frame);
+					return;
+				}
+				publishFrame(frame);
+				decodedFrames++;
+			}
+		} finally {
+			if (hardwareDecoder == currentDecoder) {
+				hardwareDecoder = null;
+			}
+			currentDecoder.close();
+		}
+	}
+
+	private void playWithSoftwareDecoder() throws IOException {
 		Decoder currentDecoder = decoder;
 		double loopStartTimestamp = initialTimestamp;
 		long loopStartNanos = System.nanoTime();
@@ -370,7 +443,7 @@ final class PictureVideoPlayer {
 			if (!running) {
 				break;
 			}
-			NativeImage decoded = takeReusableFrame();
+			ByteBuffer decoded = takeReusableFrame();
 			if (decoded == null) {
 				break;
 			}
@@ -391,10 +464,10 @@ final class PictureVideoPlayer {
 		}
 	}
 
-	private NativeImage takeReusableFrame() {
+	private ByteBuffer takeReusableFrame() {
 		while (running) {
 			try {
-				NativeImage frame = reusableFrames.poll(100, TimeUnit.MILLISECONDS);
+				ByteBuffer frame = reusableFrames.poll(100, TimeUnit.MILLISECONDS);
 				if (frame != null) {
 					return frame;
 				}
@@ -421,15 +494,14 @@ final class PictureVideoPlayer {
 		}
 	}
 
-	private synchronized void publishFrame(NativeImage image) {
+	private synchronized void publishFrame(ByteBuffer image) {
 		if (!running) {
-			image.close();
 			return;
 		}
 		if (frames.offer(image)) {
 			return;
 		}
-		NativeImage discarded = frames.poll();
+		ByteBuffer discarded = frames.poll();
 		if (discarded != null) {
 			recycleFrame(discarded);
 		}
@@ -438,12 +510,12 @@ final class PictureVideoPlayer {
 		}
 	}
 
-	synchronized NativeImage pollLatestFrame() {
-		NativeImage latest = frames.poll();
+	synchronized ByteBuffer pollLatestFrame() {
+		ByteBuffer latest = frames.poll();
 		if (latest == null) {
 			return null;
 		}
-		NativeImage next;
+		ByteBuffer next;
 		while ((next = frames.poll()) != null) {
 			recycleFrame(latest);
 			latest = next;
@@ -451,18 +523,22 @@ final class PictureVideoPlayer {
 		return latest;
 	}
 
-	synchronized void releaseFrame(NativeImage frame) {
+	synchronized void releaseFrame(ByteBuffer frame) {
 		recycleFrame(frame);
 	}
 
-	private void recycleFrame(NativeImage frame) {
-		if (!running || !reusableFrames.offer(frame)) {
-			frame.close();
+	private void recycleFrame(ByteBuffer frame) {
+		if (running) {
+			reusableFrames.offer(frame);
 		}
 	}
 
 	void close() {
 		running = false;
+		FfmpegHardwareDecoder hardwareDecoder = this.hardwareDecoder;
+		if (hardwareDecoder != null) {
+			hardwareDecoder.close();
+		}
 		if (initialFrame != null) {
 			initialFrame.close();
 			initialFrame = null;
@@ -471,18 +547,12 @@ final class PictureVideoPlayer {
 	}
 
 	private synchronized void drainFrames() {
-		NativeImage frame;
-		while ((frame = frames.poll()) != null) {
-			frame.close();
-		}
+		frames.clear();
 		drainReusableFrames();
 	}
 
 	private void drainReusableFrames() {
-		NativeImage frame;
-		while ((frame = reusableFrames.poll()) != null) {
-			frame.close();
-		}
+		reusableFrames.clear();
 	}
 
 	record Metadata(int width, int height, double duration) {
